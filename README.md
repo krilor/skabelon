@@ -9,6 +9,13 @@ Things I want to do.
 - htmx - postgrest style?
 - batch api endpoint - jsonpatch?
 
+## Stack
+
+### Go
+
+With
+
+* https://github.com/air-verse/air
 
 ## License
 

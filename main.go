@@ -5,34 +5,18 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/gorilla/websocket"
+	"golang.org/x/net/websocket"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool { // Allow all connections for development
-		return true
-	},
-}
-
-func serveDevLiveReloadWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println("Failed to upgrade to websocket:", err)
-		return
-	}
-	defer conn.Close()
-	log.Println("DevLiveReload WebSocket connected")
-
-	// Keep the connection alive, client reloads on close
+func devlivereloadHandler(ws *websocket.Conn) {
+	fmt.Println("Client connected to /devlivereload")
+	// Handle incoming messages from the client...
+	// Send messages to the client to initiate live reload...
+	defer ws.Close()
+	msg := make([]byte, 1024)
 	for {
-		// You could read messages here if needed, but for simple live reload,
-		// just keeping the connection open is often enough.
-		// The client will attempt to reconnect if the server restarts (closing this conn).
-		_, _, err := conn.ReadMessage()
+		_, err := ws.Read(msg)
 		if err != nil {
-			log.Println("DevLiveReload WebSocket disconnected:", err)
 			break
 		}
 	}
@@ -62,7 +46,7 @@ h1 { color: #333; }
 </head>
 <body>
     <h1>Hello from Go!</h1>
-	<div id="parent-div">Its me</div>
+	<div id="parent-div">Its mess</div>
 	<button hx-post="/clicked"
     hx-trigger="click"
     hx-target="#parent-div"
@@ -80,12 +64,12 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	http.HandleFunc("/", serveHTML)
-	http.HandleFunc("/devlivereload", serveDevLiveReloadWS)
+	http.Handle("/devlivereload", websocket.Handler(devlivereloadHandler))
 	http.Handle("/clicked", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "You clicked the button!")
 	}))
 
-	log.Println("Starting server on :8080...")
+	log.Println("Starting server on http://localhost:8080...")
 	err := http.ListenAndServe(":8080", nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
