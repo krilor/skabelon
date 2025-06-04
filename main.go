@@ -4,7 +4,39 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+
+	"github.com/gorilla/websocket"
 )
+
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin: func(r *http.Request) bool { // Allow all connections for development
+		return true
+	},
+}
+
+func serveDevLiveReloadWS(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println("Failed to upgrade to websocket:", err)
+		return
+	}
+	defer conn.Close()
+	log.Println("DevLiveReload WebSocket connected")
+
+	// Keep the connection alive, client reloads on close
+	for {
+		// You could read messages here if needed, but for simple live reload,
+		// just keeping the connection open is often enough.
+		// The client will attempt to reconnect if the server restarts (closing this conn).
+		_, _, err := conn.ReadMessage()
+		if err != nil {
+			log.Println("DevLiveReload WebSocket disconnected:", err)
+			break
+		}
+	}
+}
 
 const htmlContent = `
 <!DOCTYPE html>
@@ -48,6 +80,7 @@ func serveHTML(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	http.HandleFunc("/", serveHTML)
+	http.HandleFunc("/devlivereload", serveDevLiveReloadWS)
 	http.Handle("/clicked", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "You clicked the button!")
 	}))
