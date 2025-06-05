@@ -13,9 +13,7 @@ Things I want to do.
 
 ### Go
 
-With
-
-* https://github.com/air-verse/air
+TODO
 
 ## License
 
