@@ -4,7 +4,7 @@ go 1.24.3
 
 tool github.com/air-verse/air
 
-require golang.org/x/net v0.40.0
+require golang.org/x/net v0.41.0
 
 require (
 	dario.cat/mergo v1.0.2 // indirect
@@ -24,6 +24,6 @@ require (
 	github.com/spf13/cast v1.8.0 // indirect
 	github.com/tdewolff/parse/v2 v2.8.1 // indirect
 	golang.org/x/sys v0.33.0 // indirect
-	golang.org/x/text v0.25.0 // indirect
+	golang.org/x/text v0.26.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 )

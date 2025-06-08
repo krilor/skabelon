@@ -14,3 +14,11 @@ lint:
 
 start:
     docker compose up -d
+
+upgrade:
+    #!/usr/bin/env bash
+    pre-commit autoupdate
+
+    # go
+    go get -u -t ./...
+    go mod tidy
