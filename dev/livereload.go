@@ -2,6 +2,7 @@ package dev
 
 import (
 	"fmt"
+	"html/template"
 	"net/http"
 
 	"golang.org/x/net/websocket"
@@ -22,6 +23,9 @@ const liveReloadScript = `<script>
 	};
 </script>
 `
+
+// LiveReloadHTML intended use it with html/template
+var LiveReloadHTML = template.HTML(liveReloadScript)
 
 func handleLiveReloadWebSocket(mux *http.ServeMux) {
 	fmt.Println("Registering " + liveReloadWebSocketPath)

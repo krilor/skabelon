@@ -6,7 +6,9 @@ Exploring my default stack.
 
 Things I want to do.
 
+- html/template
 - htmx - postgrest style?
+- lit
 - batch api endpoint - jsonpatch?
 
 ## Stack
