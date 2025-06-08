@@ -4,3 +4,8 @@
 > html/template, over templ, to achieve less external dependencies and higher
 > chance of stability and maintenance, accepting that the standard library
 > templating lacks ergonomics.
+
+
+> [!TIP]
+>
+> Use file associations in VSCode to associate `*.tmpl` files with `html`.
