@@ -1,0 +1,26 @@
+---
+# https://golangci-lint.run/usage/configuration/
+version: "2"
+linters:
+  default: all
+  disable:
+    - depguard
+    - nlreturn
+    - wsl
+  settings:
+    forbidigo:
+      forbid:
+        - pattern: ^fmt\.Print.*$
+        - pattern: ^log\.Print.*$
+        - pattern: ^slog\.(Debug|Warn|Info|Error)$
+    varnamelen:
+      min-name-length: 2
+      ignore-decls:
+        - w http.ResponseWriter
+        - r *http.Request
+        - ws *websocket.Conn
+formatters:
+  enable:
+    - gofmt
+    - gofumpt
+    - goimports

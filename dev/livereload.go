@@ -1,7 +1,6 @@
 package dev
 
 import (
-	"fmt"
 	"html/template"
 	"net/http"
 
@@ -12,33 +11,31 @@ import (
 // when compiled for development.
 const liveReloadWebSocketPath = "/devlivereload"
 
-// liveReloadScript is the live reload script when compiled for development
+// liveReloadScript is the live reload script when compiled for development.
 const liveReloadScript = `<script>
 	conn = new WebSocket("ws://" + document.location.host + "` + liveReloadWebSocketPath + `");
 	conn.onclose = function (evt) {
 	console.log("Connection Closed")
 	setTimeout(function () {
 		location.reload();
-	}, 2000);
+	}, 1000);
 	};
 </script>
 `
 
-// LiveReloadHTML intended use it with html/template
-var LiveReloadHTML = template.HTML(liveReloadScript)
+// LiveReloadHTML intended use it with html/template.
+const LiveReloadHTML = template.HTML(liveReloadScript) //nolint:gosec
 
-func handleLiveReloadWebSocket(mux *http.ServeMux) {
-	fmt.Println("Registering " + liveReloadWebSocketPath)
+func handleLiveReloadWebSocket(mux *http.ServeMux) { //nolint:unused
 	mux.Handle(liveReloadWebSocketPath, websocket.Handler(devLiveReloadHandler))
-	return
 }
 
-func devLiveReloadHandler(ws *websocket.Conn) {
-	fmt.Println("Client connected to " + liveReloadWebSocketPath)
+func devLiveReloadHandler(ws *websocket.Conn) { //nolint:unused
 	// Handle incoming messages from the client...
 	// Send messages to the client to initiate live reload...
-	defer ws.Close()
-	msg := make([]byte, 1024)
+	defer ws.Close() //nolint:errcheck
+	const readSize = 1024
+	msg := make([]byte, readSize)
 	for {
 		_, err := ws.Read(msg)
 		if err != nil {
