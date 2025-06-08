@@ -1,0 +1,16 @@
+{
+    // https://medium.com/olzzio/y-statements-10eb07b5a177
+    "Y-statement": {
+        "scope": "markdown",
+        "prefix": "In the context",
+        "body": [
+            "> In the context of $1,",
+            "> facing the need to $2",
+            "> I use $3,",
+            "> over $4,",
+            "> to achieve $5,",
+            "> accepting that $6.",
+        ],
+        "description": "Insert a Y-statement"
+    }
+}
