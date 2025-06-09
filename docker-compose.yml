@@ -1,0 +1,21 @@
+---
+name: skabelon
+services:
+  db:
+    image: postgres:17
+    expose:
+      - "5432"
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: postgres_pwd
+    volumes:
+      - type: bind
+        source: ${PWD}/db/initdb.d/init.sql
+        target: /docker-entrypoint-initdb.d/init.sql
+    command: >-
+      -c log_statement=all
+      -c log_min_messages=debug1
+      -c wal_level=logical
