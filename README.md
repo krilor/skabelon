@@ -8,7 +8,10 @@ Things I want to do.
 
 - html/template
 - htmx - postgrest style?
-- lit
+- lit for components?
+- idempotence (headers)
+- optimistic locking (lost update stuff)
+- HTTP query to SQL query
 - batch api endpoint - jsonpatch?
 
 ## Stack
