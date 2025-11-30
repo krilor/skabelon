@@ -28,7 +28,7 @@ start:
 
 # Run sql migrations
 migrate:
-    PGPASSWORD=skabelon_pwd psql -h localhost -d postgres -U skabelon -f db/henhold.sql
+    PGPASSWORD=skabelon_pwd psql -h localhost -d postgres -U skabelon -f db/api.sql
 
 # Upgrade all tools
 upgrade:

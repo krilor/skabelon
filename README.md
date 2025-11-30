@@ -1,14 +1,11 @@
 # skabelon
 
-Exploring my default stack.
+Exploring generated REST API from DB.
 
 ## TODOs
 
 Things I want to do.
 
-- html/template
-- htmx - postgrest style?
-- lit for components?
 - idempotence (headers)
 - optimistic locking (lost update stuff)
 - HTTP query to SQL query
