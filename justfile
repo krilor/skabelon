@@ -4,7 +4,7 @@ init:
     go get
 
 # Start, migrate, then run with air
-dev: start migrate
+dev: stop start migrate
     go tool air --build.cmd 'go build -tags dev -o ./tmp/main .'
 
 # Search for a decision
@@ -25,6 +25,10 @@ start:
         echo -n "."
         sleep 0.1;
     done
+
+# Stop is a full teardown
+stop:
+    docker compose down | true
 
 # Run sql migrations
 migrate:

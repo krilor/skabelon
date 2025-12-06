@@ -1,5 +1,7 @@
 POST http://localhost:8080/resource/
 {
-    "key": "{{newUuid}}",
+    "rkey": "{{newUuid}}",
+    "is_fun": null,
+    "my_int" : 1,
     "description": "{{newDate}}"
 }

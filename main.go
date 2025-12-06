@@ -82,7 +82,7 @@ func start(ctx context.Context) error {
 	defer db.Close() //nolint:errcheck
 
 	service := dbx.NewService(db)
-	mux.Handle("/resource/", http.StripPrefix("/resource", service))
+	mux.Handle("/resource/", LoggingMiddleware(http.StripPrefix("/resource", service)))
 
 	slog.InfoContext(ctx, "Starting server on http://localhost:8080...")
 
@@ -98,6 +98,16 @@ func start(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// LoggingMiddleware logs the request using slog.
+func LoggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+
+		next.ServeHTTP(w, r)
+		slog.InfoContext(r.Context(), "message", "method", r.Method, "path", r.URL.Path, "duration", time.Since(start))
+	})
 }
 
 func main() {

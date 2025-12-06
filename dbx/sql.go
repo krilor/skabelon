@@ -73,9 +73,72 @@ func NewService(db *sql.DB) *Service {
 var (
 	// ErrNotFound is returned when a resource is not found.
 	ErrNotFound = errors.New("not found")
-	// ErrInvalidKeyIdentifier is returned when a key identifier includes other characters than a-z and _.
-	ErrInvalidKeyIdentifier = errors.New("invalid key identifier")
+	// ErrInvalidFieldIdentifier is returned when a key identifier includes other characters than a-z and _.
+	ErrInvalidFieldIdentifier = errors.New("invalid key identifier")
 )
+
+// RawJSON a struct for holding raw JSON messages while keeping order.
+type RawJSON struct {
+	fields []string
+	values []json.RawMessage
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (rj *RawJSON) UnmarshalJSON(data []byte) error {
+	rawMap := make(map[string]json.RawMessage)
+
+	err := json.Unmarshal(data, &rawMap)
+	if err != nil {
+		return fmt.Errorf("could not unmarshal raw json: %w", err)
+	}
+
+	fields := make([]string, 0, len(rawMap))
+	values := make([]json.RawMessage, 0, len(rawMap))
+
+	for field, value := range rawMap {
+		if !regexp.MustCompile(`^[a-z_]*$`).MatchString(field) {
+			return fmt.Errorf("%w: %s", ErrInvalidFieldIdentifier, field)
+		}
+
+		fields = append(fields, field)
+		values = append(values, value)
+	}
+
+	rj.fields = fields
+	rj.values = values
+
+	return nil
+}
+
+// Fields returns the raw JSON field names.
+func (rj *RawJSON) Fields() []string {
+	return rj.fields
+}
+
+// Values returns the raw JSON values associated with the fields.
+func (rj *RawJSON) Values() []json.RawMessage {
+	return rj.values
+}
+
+func databaseType(jrm json.RawMessage) string {
+	firstByte := jrm[0]
+	switch firstByte {
+	case '{': // object
+		return "json"
+	case '[': // array
+		return "json"
+	case 't': // true
+		return "boolean"
+	case 'f': // false
+		return "boolean"
+	case '"': // string
+		return "text"
+	case 'n': // null
+		return "null"
+	default:
+		return "number"
+	}
+}
 
 // getOne returns a single resource.
 func (s *Service) getOne(ctx context.Context, id int) (string, error) {
@@ -98,6 +161,7 @@ func (s *Service) getOne(ctx context.Context, id int) (string, error) {
 	}
 }
 
+//nolint:funlen
 func (s *Service) create(req *http.Request) (string, error) {
 	ctx := req.Context()
 
@@ -108,50 +172,52 @@ func (s *Service) create(req *http.Request) (string, error) {
 
 	slog.InfoContext(ctx, "message", "body", string(body))
 
-	bodyMap := make(map[string]any)
+	rawJSON := new(RawJSON)
 
-	err = json.Unmarshal(body, &bodyMap)
+	err = json.Unmarshal(body, &rawJSON)
 	if err != nil {
 		return "", fmt.Errorf("could decode body: %w", err)
 	}
 
-	keys := make([]string, 0, len(bodyMap))
+	fields := rawJSON.Fields()
+	values := rawJSON.Values()
+	argNums := make([]string, len(fields))
+	args := make([]any, len(fields))
 
-	for key := range bodyMap {
-		// check safe keys for sql
-		if !regexp.MustCompile(`^[a-z_]*$`).MatchString(key) {
-			return "", fmt.Errorf("%w: %s", ErrInvalidKeyIdentifier, key)
+	for idx, value := range values {
+		switch databaseType(value) {
+		case "null":
+			// we cannot infer the actual type of a nulled field
+			// by continuing we just set the arg to nil
+			args[idx] = nil
+		case "text":
+			// text fields are quoted. We just remove the quotes and go on
+			args[idx] = value[1 : len(value)-1]
+		default:
+			args[idx] = value
 		}
 
-		keys = append(keys, key)
+		argNums[idx] = fmt.Sprintf("$%d", idx+1)
 	}
-
-	slog.InfoContext(ctx, "message", "keys", strings.Join(keys, ","))
-
-	// TODO the record definition just uses "text"
 
 	//nolint:gosec,unqueryvet // we need to do SQL string formatting for identifiers and splat since we want to generalize
 	qry := fmt.Sprintf(`WITH _dbx_insert AS (
 		INSERT INTO "skabelon"."resource" ( %[1]v )
-		SELECT dbx_body.%[2]v
-		FROM ( SELECT $1::json AS _json_body ) dbx_request,
-		LATERAL (
-			SELECT %[1]v FROM json_to_record( dbx_request._json_body ) as _( %[3]v text)
-		) dbx_body
+		VALUES ( %[2]v )
 		RETURNING "skabelon"."resource".*
 	)
 	SELECT
 		coalesce(json_agg(_dbx_res)->0, 'null') AS _response
 	FROM (
 		SELECT * FROM _dbx_insert
-	) _dbx_res`,
-		strings.Join(quoteIdentifiers(keys), ","),
-		strings.Join(quoteIdentifiers(keys), ", dbx_body."),
-		strings.Join(quoteIdentifiers(keys), " text, "))
+	) _dbx_res;`,
+		strings.Join(quoteIdentifiers(fields), ", "),
+		strings.Join(argNums, ", "),
+	)
+
+	row := s.db.QueryRowContext(ctx, qry, args...)
 
 	slog.InfoContext(ctx, "ready to query db", "query", qry)
-
-	row := s.db.QueryRowContext(ctx, qry, string(body))
 
 	var response string
 
