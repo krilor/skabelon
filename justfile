@@ -36,5 +36,6 @@ upgrade:
     pre-commit autoupdate
 
     # go
+    go get go@latest
     go get -u -t ./...
     go mod tidy
