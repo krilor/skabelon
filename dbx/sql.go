@@ -2,7 +2,6 @@
 package dbx
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -13,6 +12,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/lib/pq"
 )
 
 // Service is a thingy for returning json from requests.
@@ -42,7 +43,25 @@ func NewService(db *sql.DB) *Service {
 			return
 		}
 
-		str, err := srv.getOne(req.Context(), id)
+		str, err := srv.getOne(req, id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(str)) //nolint:errcheck,gosec
+	}))
+
+	// getOne endpoint based on id
+	mux.HandleFunc("PATCH /{id}", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		id, err := strconv.Atoi(req.PathValue("id"))
+		if err != nil {
+			http.Error(w, "invalid id", http.StatusBadRequest)
+			return
+		}
+
+		str, err := srv.update(id, req)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -80,7 +99,24 @@ var (
 // RawJSON a struct for holding raw JSON messages while keeping order.
 type RawJSON struct {
 	fields []string
-	values []json.RawMessage
+	values []any
+}
+
+// NewRawJSONFromRequest returns a RawJSON a http request.
+func NewRawJSONFromRequest(req *http.Request) (*RawJSON, error) {
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, fmt.Errorf("no body: %w", err)
+	}
+
+	rawJSON := new(RawJSON)
+
+	err = json.Unmarshal(body, &rawJSON)
+	if err != nil {
+		return nil, fmt.Errorf("could decode body: %w", err)
+	}
+
+	return rawJSON, nil
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
@@ -93,7 +129,7 @@ func (rj *RawJSON) UnmarshalJSON(data []byte) error {
 	}
 
 	fields := make([]string, 0, len(rawMap))
-	values := make([]json.RawMessage, 0, len(rawMap))
+	values := make([]any, 0, len(rawMap))
 
 	for field, value := range rawMap {
 		if !regexp.MustCompile(`^[a-z_]*$`).MatchString(field) {
@@ -101,7 +137,18 @@ func (rj *RawJSON) UnmarshalJSON(data []byte) error {
 		}
 
 		fields = append(fields, field)
-		values = append(values, value)
+
+		switch databaseType(value) {
+		case "null":
+			// we cannot infer the actual type of a nulled field
+			// by continuing we just set the arg to nil
+			values = append(values, nil)
+		case "text":
+			// text fields are quoted. We just remove the quotes and go on
+			values = append(values, value[1:len(value)-1])
+		default:
+			values = append(values, value)
+		}
 	}
 
 	rj.fields = fields
@@ -116,7 +163,7 @@ func (rj *RawJSON) Fields() []string {
 }
 
 // Values returns the raw JSON values associated with the fields.
-func (rj *RawJSON) Values() []json.RawMessage {
+func (rj *RawJSON) Values() []any {
 	return rj.values
 }
 
@@ -141,7 +188,8 @@ func databaseType(jrm json.RawMessage) string {
 }
 
 // getOne returns a single resource.
-func (s *Service) getOne(ctx context.Context, id int) (string, error) {
+func (s *Service) getOne(req *http.Request, id int) (string, error) {
+	ctx := req.Context()
 	//nolint:unqueryvet // We really do want to do select * here
 	qry := `SELECT
 		coalesce(json_agg(_dbx_res)->0, 'null') AS _response
@@ -161,42 +209,18 @@ func (s *Service) getOne(ctx context.Context, id int) (string, error) {
 	}
 }
 
-//nolint:funlen
 func (s *Service) create(req *http.Request) (string, error) {
 	ctx := req.Context()
 
-	body, err := io.ReadAll(req.Body)
+	rawJSON, err := NewRawJSONFromRequest(req)
 	if err != nil {
-		return "", fmt.Errorf("no body: %w", err)
-	}
-
-	slog.InfoContext(ctx, "message", "body", string(body))
-
-	rawJSON := new(RawJSON)
-
-	err = json.Unmarshal(body, &rawJSON)
-	if err != nil {
-		return "", fmt.Errorf("could decode body: %w", err)
+		return "", err
 	}
 
 	fields := rawJSON.Fields()
-	values := rawJSON.Values()
 	argNums := make([]string, len(fields))
-	args := make([]any, len(fields))
 
-	for idx, value := range values {
-		switch databaseType(value) {
-		case "null":
-			// we cannot infer the actual type of a nulled field
-			// by continuing we just set the arg to nil
-			args[idx] = nil
-		case "text":
-			// text fields are quoted. We just remove the quotes and go on
-			args[idx] = value[1 : len(value)-1]
-		default:
-			args[idx] = value
-		}
-
+	for idx := range fields {
 		argNums[idx] = fmt.Sprintf("$%d", idx+1)
 	}
 
@@ -205,16 +229,17 @@ func (s *Service) create(req *http.Request) (string, error) {
 		INSERT INTO "skabelon"."resource" ( %[1]v )
 		VALUES ( %[2]v )
 		RETURNING "skabelon"."resource".*
-	)
-	SELECT
+		)
+		SELECT
 		coalesce(json_agg(_dbx_res)->0, 'null') AS _response
-	FROM (
-		SELECT * FROM _dbx_insert
-	) _dbx_res;`,
+		FROM (
+			SELECT * FROM _dbx_insert
+			) _dbx_res;`,
 		strings.Join(quoteIdentifiers(fields), ", "),
 		strings.Join(argNums, ", "),
 	)
 
+	args := rawJSON.Values()
 	row := s.db.QueryRowContext(ctx, qry, args...)
 
 	slog.InfoContext(ctx, "ready to query db", "query", qry)
@@ -227,7 +252,61 @@ func (s *Service) create(req *http.Request) (string, error) {
 	case nil:
 		return response, nil
 	default:
+		err := &pq.Error{} //nolint:exhaustruct
+		if errors.As(err, &err) {
+			slog.InfoContext(ctx, "pq error", "codename", err.Code.Name(), "error", err.Severity)
+		}
+
 		return "", fmt.Errorf("could not create resource: %w", err)
+	}
+}
+
+func (s *Service) update(id int, req *http.Request) (string, error) {
+	ctx := req.Context()
+
+	rawJSON, err := NewRawJSONFromRequest(req)
+	if err != nil {
+		return "", err
+	}
+
+	fields := rawJSON.Fields()
+	setList := make([]string, len(fields))
+
+	for idx, field := range fields {
+		setList[idx] = fmt.Sprintf("\"%s\" = $%d", field, idx+1)
+	}
+
+	//nolint:gosec,unqueryvet // we need to do SQL string formatting for identifiers
+	qry := fmt.Sprintf(`WITH _dbx_update AS (
+		UPDATE "skabelon"."resource"
+		SET %[1]v
+		WHERE "id" = $%[2]d
+		RETURNING "skabelon"."resource".*
+		)
+		SELECT
+			coalesce(json_agg(_dbx_res)->0, 'null') AS _response
+		FROM (
+			SELECT * FROM _dbx_update
+			) _dbx_res;`,
+		strings.Join(setList, ", "),
+		len(fields)+1,
+	)
+
+	args := rawJSON.Values()
+	args = append(args, id)
+	row := s.db.QueryRowContext(ctx, qry, args...)
+
+	slog.InfoContext(ctx, "ready to query db", "query", qry)
+
+	var response string
+
+	switch err := row.Scan(&response); err {
+	case sql.ErrNoRows:
+		return "", ErrNotFound
+	case nil:
+		return response, nil
+	default:
+		return "", fmt.Errorf("could not update resource: %w", err)
 	}
 }
 
