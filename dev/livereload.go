@@ -34,7 +34,9 @@ func devLiveReloadHandler(ws *websocket.Conn) { //nolint:unused
 	// Handle incoming messages from the client...
 	// Send messages to the client to initiate live reload...
 	defer ws.Close() //nolint:errcheck
+
 	const readSize = 1024
+
 	msg := make([]byte, readSize)
 	for {
 		_, err := ws.Read(msg)

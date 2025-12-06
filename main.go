@@ -24,12 +24,13 @@ type needNewName struct {
 // newNeedNewName returns a new NeedNewName.
 func newNeedNewName() *needNewName {
 	t := template.Must(template.ParseGlob("templates/*.tmpl"))
+
 	return &needNewName{
 		t: t,
 	}
 }
 
-func dbConnection() (*sql.DB, error) {
+func dbConnection(ctx context.Context) (*sql.DB, error) {
 	host := "localhost"
 	port := 5432
 	user := "postgres"
@@ -38,12 +39,13 @@ func dbConnection() (*sql.DB, error) {
 	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s "+
 		"password=%s dbname=%s sslmode=disable",
 		host, port, user, password, dbname)
+
 	db, err := sql.Open("postgres", psqlInfo)
 	if err != nil {
 		return nil, fmt.Errorf("could not connect to db: %w", err)
 	}
 
-	err = db.Ping()
+	err = db.PingContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("could not pind db: %w", err)
 	}
@@ -54,6 +56,7 @@ func dbConnection() (*sql.DB, error) {
 // ServeHTTP implements http.Handler.
 func (n *needNewName) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
 	err := n.t.ExecuteTemplate(w, "index.tmpl", map[string]any{"Head": dev.LiveReloadHTML})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -72,14 +75,14 @@ func start(ctx context.Context) error {
 		fmt.Fprint(w, "You clicked the button!") //nolint:errcheck
 	}))
 
-	db, err := dbConnection()
+	db, err := dbConnection(ctx)
 	if err != nil {
 		return err
 	}
 	defer db.Close() //nolint:errcheck
 
 	service := dbx.NewService(db)
-	mux.Handle("/resource/1", service)
+	mux.Handle("/resource/", http.StripPrefix("/resource", service))
 
 	slog.InfoContext(ctx, "Starting server on http://localhost:8080...")
 
