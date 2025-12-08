@@ -45,13 +45,14 @@ func NewCRUDHandler(db *sql.DB, relation Relation) *CRUDHandler {
 			return
 		}
 
-		str, err := srv.getOne(req, id)
+		str, etag, err := srv.getOne(req, id)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", etag)
 		w.Write([]byte(str)) //nolint:errcheck,gosec
 	}))
 
@@ -190,26 +191,33 @@ func databaseType(jrm json.RawMessage) string {
 }
 
 // getOne returns a single resource.
-func (s *CRUDHandler) getOne(req *http.Request, id int) (string, error) {
+func (s *CRUDHandler) getOne(req *http.Request, id int) (string, string, error) {
 	ctx := req.Context()
+
 	//nolint:gosec // We really do want to do select * here
 	qry := fmt.Sprintf(`SELECT
-		coalesce(json_agg(_dbx_res)->0, 'null') AS _response
-	FROM ( SELECT %s FROM "%s"."%s"  WHERE  "id" = $1 ) _dbx_res`,
-		strings.Join(quoteIdentifiers(s.rel.Columns), " ,"),
+			( select row_to_json(_obj) from (select %[1]s) as _obj ) as _response,
+			_etag
+		FROM "%[2]s"."%[3]s" _dbx  WHERE  "id" = $1 LIMIT 1`,
+		strings.Join(prependIdentifier("_dbx", s.rel.Columns), " ,"),
 		s.rel.Schema,
 		s.rel.Name,
 	)
 
+	slog.InfoContext(ctx, "query prepped", "query", qry)
+
 	row := s.db.QueryRowContext(ctx, qry, id)
 
-	var response string
+	var (
+		response string
+		etag     string
+	)
 
-	switch err := row.Scan(&response); err {
+	switch err := row.Scan(&response, &etag); err {
 	case sql.ErrNoRows:
-		return "", ErrNotFound
+		return "", "", ErrNotFound
 	case nil:
-		return response, nil
+		return response, etag, nil
 	default:
 		panic(err)
 	}
@@ -331,4 +339,14 @@ func quoteIdentifiers(s []string) []string {
 	}
 
 	return qs
+}
+
+func prependIdentifier(identifier string, identifiers []string) []string {
+	result := make([]string, len(identifiers))
+
+	for i, v := range identifiers {
+		result[i] = fmt.Sprintf(`"%s"."%s"`, identifier, v)
+	}
+
+	return result
 }
