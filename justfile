@@ -15,6 +15,10 @@ decision term:
 lint:
     pre-commit run --all-files
 
+# Stop is a full teardown
+stop:
+    docker compose down | true
+
 # Start with docker compose
 start:
     #!/usr/bin/env bash
@@ -26,9 +30,9 @@ start:
         sleep 0.1;
     done
 
-# Stop is a full teardown
-stop:
-    docker compose down | true
+# Connect to local database
+connect:
+    PGPASSWORD=postgres_pwd psql -h localhost -p 5432 -d postgres -U postgres
 
 # Run sql migrations
 migrate:

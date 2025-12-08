@@ -192,10 +192,14 @@ func databaseType(jrm json.RawMessage) string {
 // getOne returns a single resource.
 func (s *CRUDHandler) getOne(req *http.Request, id int) (string, error) {
 	ctx := req.Context()
-	//nolint:gosec,unqueryvet // We really do want to do select * here
+	//nolint:gosec // We really do want to do select * here
 	qry := fmt.Sprintf(`SELECT
 		coalesce(json_agg(_dbx_res)->0, 'null') AS _response
-	FROM ( SELECT * FROM "%s"."%s"  WHERE  "id" = $1 ) _dbx_res`, s.rel.Schema, s.rel.Name)
+	FROM ( SELECT %s FROM "%s"."%s"  WHERE  "id" = $1 ) _dbx_res`,
+		strings.Join(quoteIdentifiers(s.rel.Columns), " ,"),
+		s.rel.Schema,
+		s.rel.Name,
+	)
 
 	row := s.db.QueryRowContext(ctx, qry, id)
 
@@ -226,21 +230,23 @@ func (s *CRUDHandler) create(req *http.Request) (string, error) {
 		argNums[idx] = fmt.Sprintf("$%d", idx+1)
 	}
 
-	//nolint:gosec,unqueryvet // we need to do SQL string formatting for identifiers and splat since we want to generalize
+	//nolint:gosec // we need to do SQL string formatting for identifiers
 	qry := fmt.Sprintf(`WITH _dbx_insert AS (
-		INSERT INTO "%[1]s"."%[2]s" ( %[3]s )
-		VALUES ( %[4]s )
-		RETURNING "%[1]s"."%[2]s".*
+		INSERT INTO "%[1]s"."%[2]s" ( %[4]s )
+		VALUES ( %[5]s )
+		RETURNING %[3]s
 		)
 		SELECT
 		coalesce(json_agg(_dbx_res)->0, 'null') AS _response
 		FROM (
-			SELECT * FROM _dbx_insert
+			SELECT %[6]s FROM _dbx_insert
 			) _dbx_res;`,
 		s.rel.Schema,
 		s.rel.Name,
+		s.rel.returning(),
 		strings.Join(quoteIdentifiers(fields), ", "),
 		strings.Join(argNums, ", "),
+		strings.Join(quoteIdentifiers(s.rel.Columns), ", "),
 	)
 
 	args := rawJSON.Values()
@@ -280,22 +286,24 @@ func (s *CRUDHandler) update(id int, req *http.Request) (string, error) {
 		setList[idx] = fmt.Sprintf("\"%s\" = $%d", field, idx+1)
 	}
 
-	//nolint:gosec,unqueryvet // we need to do SQL string formatting for identifiers
+	//nolint:gosec // we need to do SQL string formatting for identifiers
 	qry := fmt.Sprintf(`WITH _dbx_update AS (
 		UPDATE "%[1]s"."%[2]s"
-		SET %[3]v
-		WHERE "id" = $%[4]d
-		RETURNING "%[1]s"."%[2]s".*
+		SET %[4]v
+		WHERE "id" = $%[5]d
+		RETURNING %[3]s
 		)
 		SELECT
 			coalesce(json_agg(_dbx_res)->0, 'null') AS _response
 		FROM (
-			SELECT * FROM _dbx_update
+			SELECT %[6]s FROM _dbx_update
 			) _dbx_res;`,
 		s.rel.Schema,
 		s.rel.Name,
+		s.rel.returning(),
 		strings.Join(setList, ", "),
 		len(fields)+1,
+		strings.Join(quoteIdentifiers(s.rel.Columns), ", "),
 	)
 
 	args := rawJSON.Values()
