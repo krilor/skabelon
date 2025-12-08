@@ -16,11 +16,12 @@ import (
 	"github.com/lib/pq"
 )
 
-// Service is a thingy for returning json from requests.
-type Service struct {
+// CRUDHandler is a thingy for returning json from requests.
+type CRUDHandler struct {
 	http.Handler
 
-	db *sql.DB
+	db  *sql.DB
+	rel Relation
 }
 
 // TODO proper structure
@@ -28,10 +29,11 @@ type Service struct {
 // https://medium.com/@matryer/writing-middleware-in-golang-and-how-go-makes-it-so-much-fun-4375c1246e81
 // https://grafana.com/blog/2024/02/09/how-i-write-http-services-in-go-after-13-years/
 
-// NewService returns a new Service.
-func NewService(db *sql.DB) *Service {
-	srv := Service{ //nolint:exhaustruct
-		db: db,
+// NewCRUDHandler returns a new Service.
+func NewCRUDHandler(db *sql.DB, relation Relation) *CRUDHandler {
+	srv := CRUDHandler{ //nolint:exhaustruct
+		db:  db,
+		rel: relation,
 	}
 
 	mux := http.NewServeMux()
@@ -188,12 +190,12 @@ func databaseType(jrm json.RawMessage) string {
 }
 
 // getOne returns a single resource.
-func (s *Service) getOne(req *http.Request, id int) (string, error) {
+func (s *CRUDHandler) getOne(req *http.Request, id int) (string, error) {
 	ctx := req.Context()
-	//nolint:unqueryvet // We really do want to do select * here
-	qry := `SELECT
+	//nolint:gosec,unqueryvet // We really do want to do select * here
+	qry := fmt.Sprintf(`SELECT
 		coalesce(json_agg(_dbx_res)->0, 'null') AS _response
-	FROM ( SELECT * FROM "skabelon"."resource"  WHERE  "id" = $1 ) _dbx_res`
+	FROM ( SELECT * FROM "%s"."%s"  WHERE  "id" = $1 ) _dbx_res`, s.rel.Schema, s.rel.Name)
 
 	row := s.db.QueryRowContext(ctx, qry, id)
 
@@ -209,7 +211,7 @@ func (s *Service) getOne(req *http.Request, id int) (string, error) {
 	}
 }
 
-func (s *Service) create(req *http.Request) (string, error) {
+func (s *CRUDHandler) create(req *http.Request) (string, error) {
 	ctx := req.Context()
 
 	rawJSON, err := NewRawJSONFromRequest(req)
@@ -226,15 +228,17 @@ func (s *Service) create(req *http.Request) (string, error) {
 
 	//nolint:gosec,unqueryvet // we need to do SQL string formatting for identifiers and splat since we want to generalize
 	qry := fmt.Sprintf(`WITH _dbx_insert AS (
-		INSERT INTO "skabelon"."resource" ( %[1]v )
-		VALUES ( %[2]v )
-		RETURNING "skabelon"."resource".*
+		INSERT INTO "%[1]s"."%[2]s" ( %[3]s )
+		VALUES ( %[4]s )
+		RETURNING "%[1]s"."%[2]s".*
 		)
 		SELECT
 		coalesce(json_agg(_dbx_res)->0, 'null') AS _response
 		FROM (
 			SELECT * FROM _dbx_insert
 			) _dbx_res;`,
+		s.rel.Schema,
+		s.rel.Name,
 		strings.Join(quoteIdentifiers(fields), ", "),
 		strings.Join(argNums, ", "),
 	)
@@ -261,7 +265,7 @@ func (s *Service) create(req *http.Request) (string, error) {
 	}
 }
 
-func (s *Service) update(id int, req *http.Request) (string, error) {
+func (s *CRUDHandler) update(id int, req *http.Request) (string, error) {
 	ctx := req.Context()
 
 	rawJSON, err := NewRawJSONFromRequest(req)
@@ -278,16 +282,18 @@ func (s *Service) update(id int, req *http.Request) (string, error) {
 
 	//nolint:gosec,unqueryvet // we need to do SQL string formatting for identifiers
 	qry := fmt.Sprintf(`WITH _dbx_update AS (
-		UPDATE "skabelon"."resource"
-		SET %[1]v
-		WHERE "id" = $%[2]d
-		RETURNING "skabelon"."resource".*
+		UPDATE "%[1]s"."%[2]s"
+		SET %[3]v
+		WHERE "id" = $%[4]d
+		RETURNING "%[1]s"."%[2]s".*
 		)
 		SELECT
 			coalesce(json_agg(_dbx_res)->0, 'null') AS _response
 		FROM (
 			SELECT * FROM _dbx_update
 			) _dbx_res;`,
+		s.rel.Schema,
+		s.rel.Name,
 		strings.Join(setList, ", "),
 		len(fields)+1,
 	)

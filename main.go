@@ -81,7 +81,17 @@ func start(ctx context.Context) error {
 	}
 	defer db.Close() //nolint:errcheck
 
-	service := dbx.NewService(db)
+	service := dbx.NewCRUDHandler(db, dbx.Relation{
+		Schema: "skabelon",
+		Name:   "resource",
+		Columns: []string{
+			"id",
+			"rkey",
+			"is_fun",
+			"my_int",
+			"description",
+		},
+	})
 	mux.Handle("/resource/", LoggingMiddleware(http.StripPrefix("/resource", service)))
 
 	slog.InfoContext(ctx, "Starting server on http://localhost:8080...")
