@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/krilor/skabelon/header"
 	"github.com/lib/pq"
 )
 
@@ -30,6 +31,8 @@ type CRUDHandler struct {
 // https://grafana.com/blog/2024/02/09/how-i-write-http-services-in-go-after-13-years/
 
 // NewCRUDHandler returns a new Service.
+//
+//nolint:funlen
 func NewCRUDHandler(db *sql.DB, relation Relation) *CRUDHandler {
 	srv := CRUDHandler{ //nolint:exhaustruct
 		db:  db,
@@ -45,18 +48,34 @@ func NewCRUDHandler(db *sql.DB, relation Relation) *CRUDHandler {
 			return
 		}
 
-		str, etag, err := srv.getOne(req, id)
+		str, etagStr, err := srv.getOne(req, id)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
+		etag := header.NewETag(false, etagStr)
+		ifMatch := req.Header.Get("If-Match")
+
+		if ifMatch != "" {
+			match, err := header.ParseMatch(ifMatch)
+			if err != nil {
+				http.Error(w, "invalid If-Match header", http.StatusBadRequest)
+				return
+			}
+
+			if match.MatchStrong(etag) {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("ETag", etag)
+		w.Header().Set("ETag", etag.String())
 		w.Write([]byte(str)) //nolint:errcheck,gosec
 	}))
 
-	// getOne endpoint based on id
+	// updateOne endpoint based on id
 	mux.HandleFunc("PATCH /{id}", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		id, err := strconv.Atoi(req.PathValue("id"))
 		if err != nil {
@@ -194,7 +213,7 @@ func databaseType(jrm json.RawMessage) string {
 func (s *CRUDHandler) getOne(req *http.Request, id int) (string, string, error) {
 	ctx := req.Context()
 
-	//nolint:gosec // We really do want to do select * here
+	//nolint:gosec // we need to do SQL string formatting for identifiers
 	qry := fmt.Sprintf(`SELECT
 			( select row_to_json(_obj) from (select %[1]s) as _obj ) as _response,
 			_etag

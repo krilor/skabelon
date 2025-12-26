@@ -15,6 +15,10 @@ decision term:
 lint:
     pre-commit run --all-files
 
+# Test
+test:
+    go test ./...
+
 # Stop is a full teardown
 stop:
     docker compose down | true
