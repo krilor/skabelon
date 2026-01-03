@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"log/slog"
@@ -11,7 +10,7 @@ import (
 	"text/template"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/krilor/skabelon/dbx"
 	"github.com/krilor/skabelon/dev"
@@ -30,7 +29,7 @@ func newNeedNewName() *needNewName {
 	}
 }
 
-func dbConnection(ctx context.Context) (*sql.DB, error) {
+func dbConnection(ctx context.Context) (*pgxpool.Pool, error) {
 	host := "localhost"
 	port := 5432
 	user := "postgres"
@@ -40,17 +39,17 @@ func dbConnection(ctx context.Context) (*sql.DB, error) {
 		"password=%s dbname=%s sslmode=disable",
 		host, port, user, password, dbname)
 
-	db, err := sql.Open("postgres", psqlInfo)
+	pool, err := pgxpool.New(ctx, psqlInfo)
 	if err != nil {
 		return nil, fmt.Errorf("could not connect to db: %w", err)
 	}
 
-	err = db.PingContext(ctx)
+	err = pool.Ping(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("could not pind db: %w", err)
+		return nil, fmt.Errorf("could not ping db: %w", err)
 	}
 
-	return db, nil
+	return pool, nil
 }
 
 // ServeHTTP implements http.Handler.
@@ -79,7 +78,7 @@ func start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close() //nolint:errcheck
+	defer db.Close()
 
 	service := dbx.NewCRUDHandler(db, dbx.Relation{
 		Schema: "skabelon",

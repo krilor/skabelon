@@ -1,4 +1,3 @@
-// Package dbx implements things for getting json directly from a sql.DB
 package dbx
 
 import (
@@ -13,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/krilor/skabelon/header"
 	"github.com/lib/pq"
 )
@@ -21,7 +21,7 @@ import (
 type CRUDHandler struct {
 	http.Handler
 
-	db  *sql.DB
+	db  *pgxpool.Pool
 	rel Relation
 }
 
@@ -33,7 +33,7 @@ type CRUDHandler struct {
 // NewCRUDHandler returns a new Service.
 //
 //nolint:funlen
-func NewCRUDHandler(db *sql.DB, relation Relation) *CRUDHandler {
+func NewCRUDHandler(db *pgxpool.Pool, relation Relation) *CRUDHandler {
 	srv := CRUDHandler{ //nolint:exhaustruct
 		db:  db,
 		rel: relation,
@@ -213,7 +213,6 @@ func databaseType(jrm json.RawMessage) string {
 func (s *CRUDHandler) getOne(req *http.Request, id int) (string, string, error) {
 	ctx := req.Context()
 
-	//nolint:gosec // we need to do SQL string formatting for identifiers
 	qry := fmt.Sprintf(`SELECT
 			( select row_to_json(_obj) from (select %[1]s) as _obj ) as _response,
 			_etag
@@ -225,17 +224,23 @@ func (s *CRUDHandler) getOne(req *http.Request, id int) (string, string, error) 
 
 	slog.InfoContext(ctx, "query prepped", "query", qry)
 
-	row := s.db.QueryRowContext(ctx, qry, id)
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", "", fmt.Errorf("could not start transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, qry, id)
 
 	var (
 		response string
 		etag     string
 	)
 
-	switch err := row.Scan(&response, &etag); err {
-	case sql.ErrNoRows:
+	switch err := row.Scan(&response, &etag); {
+	case errors.Is(err, sql.ErrNoRows):
 		return "", "", ErrNotFound
-	case nil:
+	case err == nil:
 		return response, etag, nil
 	default:
 		panic(err)
@@ -257,7 +262,6 @@ func (s *CRUDHandler) create(req *http.Request) (string, error) {
 		argNums[idx] = fmt.Sprintf("$%d", idx+1)
 	}
 
-	//nolint:gosec // we need to do SQL string formatting for identifiers
 	qry := fmt.Sprintf(`WITH _dbx_insert AS (
 		INSERT INTO "%[1]s"."%[2]s" ( %[4]s )
 		VALUES ( %[5]s )
@@ -276,28 +280,38 @@ func (s *CRUDHandler) create(req *http.Request) (string, error) {
 		strings.Join(quoteIdentifiers(s.rel.Columns), ", "),
 	)
 
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("could not begin transaction: %w", err)
+	}
+
+	defer tx.Rollback(ctx)
+
 	args := rawJSON.Values()
-	row := s.db.QueryRowContext(ctx, qry, args...)
+	row := tx.QueryRow(ctx, qry, args...)
 
 	slog.InfoContext(ctx, "ready to query db", "query", qry)
 
 	var response string
 
-	switch err := row.Scan(&response); err {
-	case sql.ErrNoRows:
-		return "", ErrNotFound
-	case nil:
-		return response, nil
-	default:
-		err := &pq.Error{} //nolint:exhaustruct
-		if errors.As(err, &err) {
-			slog.InfoContext(ctx, "pq error", "codename", err.Code.Name(), "error", err.Severity)
+	err = row.Scan(&response)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+
+		pgErr := &pq.Error{} //nolint:exhaustruct
+		if errors.As(err, &pgErr) {
+			slog.InfoContext(ctx, "pq error", "codename", pgErr.Code.Name(), "error", pgErr.Severity)
 		}
 
 		return "", fmt.Errorf("could not create resource: %w", err)
 	}
+
+	return response, nil
 }
 
+//nolint:funlen
 func (s *CRUDHandler) update(id int, req *http.Request) (string, error) {
 	ctx := req.Context()
 
@@ -313,7 +327,6 @@ func (s *CRUDHandler) update(id int, req *http.Request) (string, error) {
 		setList[idx] = fmt.Sprintf("\"%s\" = $%d", field, idx+1)
 	}
 
-	//nolint:gosec // we need to do SQL string formatting for identifiers
 	qry := fmt.Sprintf(`WITH _dbx_update AS (
 		UPDATE "%[1]s"."%[2]s"
 		SET %[4]v
@@ -335,20 +348,33 @@ func (s *CRUDHandler) update(id int, req *http.Request) (string, error) {
 
 	args := rawJSON.Values()
 	args = append(args, id)
-	row := s.db.QueryRowContext(ctx, qry, args...)
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("could not begin transaction: %w", err)
+	}
+
+	row := tx.QueryRow(ctx, qry, args...)
 
 	slog.InfoContext(ctx, "ready to query db", "query", qry)
 
 	var response string
 
-	switch err := row.Scan(&response); err {
-	case sql.ErrNoRows:
-		return "", ErrNotFound
-	case nil:
-		return response, nil
-	default:
+	err = row.Scan(&response)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+
+		pgErr := &pq.Error{} //nolint:exhaustruct
+		if errors.As(err, &pgErr) {
+			slog.InfoContext(ctx, "pq error", "codename", pgErr.Code.Name(), "error", pgErr.Severity)
+		}
+
 		return "", fmt.Errorf("could not update resource: %w", err)
 	}
+
+	return response, nil
 }
 
 func quoteIdentifiers(s []string) []string {

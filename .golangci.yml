@@ -8,6 +8,11 @@ linters:
     - nlreturn
     - wsl
   settings:
+    errcheck:
+      exclude-functions:
+        - (github.com/jackc/pgx/v5.Tx).Commit
+        - (github.com/jackc/pgx/v5.Tx).Rollback
+        - (io.Closer).Close
     forbidigo:
       forbid:
         - pattern: ^fmt\.Print.*$
