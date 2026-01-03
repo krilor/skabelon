@@ -2,9 +2,11 @@ package header
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 )
+
+// ErrInvalidMatch is returned when a match header is invalid.
+var ErrInvalidMatch = errors.New("invalid match header")
 
 // Match is the header format used with If-None-Match and If-Match
 // Match contains a list of values that can be matched.
@@ -76,7 +78,7 @@ func (m Match) String() string {
 // ParseMatch creates a new Match from a string.
 func ParseMatch(value string) (Match, error) {
 	if len(value) == 0 {
-		return Match{}, fmt.Errorf("cannot parse match header: %w", ErrEmptyHeader)
+		return Match{}, errors.Join(ErrInvalidMatch, ErrEmptyHeader)
 	}
 
 	if value == matchAny {
@@ -92,7 +94,7 @@ func ParseMatch(value string) (Match, error) {
 
 		etag, err := ParseEtag(etagStr)
 		if err != nil {
-			return Match{}, fmt.Errorf("cannot parse match header: %w", err)
+			return Match{}, errors.Join(ErrInvalidMatch, err)
 		}
 
 		etagValues = append(etagValues, etag)

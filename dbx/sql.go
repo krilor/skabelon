@@ -1,6 +1,7 @@
 package dbx
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/krilor/skabelon/header"
 	"github.com/lib/pq"
@@ -32,7 +34,7 @@ type CRUDHandler struct {
 
 // NewCRUDHandler returns a new Service.
 //
-//nolint:funlen
+//nolint:funlen,cyclop
 func NewCRUDHandler(db *pgxpool.Pool, relation Relation) *CRUDHandler {
 	srv := CRUDHandler{ //nolint:exhaustruct
 		db:  db,
@@ -48,14 +50,29 @@ func NewCRUDHandler(db *pgxpool.Pool, relation Relation) *CRUDHandler {
 			return
 		}
 
-		str, etagStr, err := srv.getOne(req, id)
+		ctx := req.Context()
+
+		tx, err := srv.db.Begin(ctx)
+		if err != nil {
+			slog.ErrorContext(ctx, "could not start transaction",
+				"relation", relation.Name,
+				"schema", relation.Schema,
+				"operation", "getOne",
+				"error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+
+			return
+		}
+		defer tx.Rollback(req.Context())
+
+		str, etagStr, err := srv.getOne(ctx, tx, srv.rel.Columns, id)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		etag := header.NewETag(false, etagStr)
-		ifMatch := req.Header.Get("If-Match")
+		ifMatch := req.Header.Get(header.NameIfMatch)
 
 		if ifMatch != "" {
 			match, err := header.ParseMatch(ifMatch)
@@ -85,7 +102,18 @@ func NewCRUDHandler(db *pgxpool.Pool, relation Relation) *CRUDHandler {
 
 		str, err := srv.update(id, req)
 		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
+
+			if errors.Is(err, ErrPreconditionFailed) {
+				http.Error(w, err.Error(), http.StatusPreconditionFailed)
+				return
+			}
+
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+
 			return
 		}
 
@@ -112,37 +140,48 @@ func NewCRUDHandler(db *pgxpool.Pool, relation Relation) *CRUDHandler {
 }
 
 var (
-	// ErrNotFound is returned when a resource is not found.
+	// ErrForbidden is returned when a request is forbidden - HTTP 403.
+	ErrForbidden = errors.New("forbidden")
+	// ErrNotFound is returned when a resource is not found - HTTP 404.
 	ErrNotFound = errors.New("not found")
+	// ErrPreconditionFailed is returned when a precondition is not met - HTTP 412.
+	ErrPreconditionFailed = errors.New("precondition failed")
 	// ErrInvalidFieldIdentifier is returned when a key identifier includes other characters than a-z and _.
 	ErrInvalidFieldIdentifier = errors.New("invalid key identifier")
+	// ErrEmptyObject is returned when a RawJSONObject is empty.
+	ErrEmptyObject = errors.New("empty object")
 )
 
-// RawJSON a struct for holding raw JSON messages while keeping order.
-type RawJSON struct {
+// RawJSONObject a struct for holding raw JSON messages while keeping order.
+type RawJSONObject struct {
 	fields []string
 	values []any
 }
 
-// NewRawJSONFromRequest returns a RawJSON a http request.
-func NewRawJSONFromRequest(req *http.Request) (*RawJSON, error) {
+// NewRawJSONObjectFromRequest returns a RawJSON a http request.
+// Errors if unmarshal fails or if the object is empty.
+func NewRawJSONObjectFromRequest(req *http.Request) (*RawJSONObject, error) {
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		return nil, fmt.Errorf("no body: %w", err)
 	}
 
-	rawJSON := new(RawJSON)
+	rawJSON := new(RawJSONObject)
 
 	err = json.Unmarshal(body, &rawJSON)
 	if err != nil {
 		return nil, fmt.Errorf("could decode body: %w", err)
 	}
 
+	if len(rawJSON.fields) == 0 {
+		return nil, ErrEmptyObject
+	}
+
 	return rawJSON, nil
 }
 
 // UnmarshalJSON implements json.Unmarshaler.
-func (rj *RawJSON) UnmarshalJSON(data []byte) error {
+func (rjo *RawJSONObject) UnmarshalJSON(data []byte) error {
 	rawMap := make(map[string]json.RawMessage)
 
 	err := json.Unmarshal(data, &rawMap)
@@ -173,20 +212,20 @@ func (rj *RawJSON) UnmarshalJSON(data []byte) error {
 		}
 	}
 
-	rj.fields = fields
-	rj.values = values
+	rjo.fields = fields
+	rjo.values = values
 
 	return nil
 }
 
 // Fields returns the raw JSON field names.
-func (rj *RawJSON) Fields() []string {
-	return rj.fields
+func (rjo *RawJSONObject) Fields() []string {
+	return rjo.fields
 }
 
 // Values returns the raw JSON values associated with the fields.
-func (rj *RawJSON) Values() []any {
-	return rj.values
+func (rjo *RawJSONObject) Values() []any {
+	return rjo.values
 }
 
 func databaseType(jrm json.RawMessage) string {
@@ -210,25 +249,19 @@ func databaseType(jrm json.RawMessage) string {
 }
 
 // getOne returns a single resource.
-func (s *CRUDHandler) getOne(req *http.Request, id int) (string, string, error) {
-	ctx := req.Context()
-
+// Returns response, etag and error.
+// Error is ErrNotFound if the resource is not found.
+func (s *CRUDHandler) getOne(ctx context.Context, tx pgx.Tx, fields []string, id int) (string, string, error) {
 	qry := fmt.Sprintf(`SELECT
 			( select row_to_json(_obj) from (select %[1]s) as _obj ) as _response,
 			_etag
 		FROM "%[2]s"."%[3]s" _dbx  WHERE  "id" = $1 LIMIT 1`,
-		strings.Join(prependIdentifier("_dbx", s.rel.Columns), " ,"),
+		strings.Join(prependIdentifier("_dbx", fields), " ,"),
 		s.rel.Schema,
 		s.rel.Name,
 	)
 
 	slog.InfoContext(ctx, "query prepped", "query", qry)
-
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return "", "", fmt.Errorf("could not start transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
 
 	row := tx.QueryRow(ctx, qry, id)
 
@@ -250,7 +283,7 @@ func (s *CRUDHandler) getOne(req *http.Request, id int) (string, string, error) 
 func (s *CRUDHandler) create(req *http.Request) (string, error) {
 	ctx := req.Context()
 
-	rawJSON, err := NewRawJSONFromRequest(req)
+	rawJSON, err := NewRawJSONObjectFromRequest(req)
 	if err != nil {
 		return "", err
 	}
@@ -311,16 +344,48 @@ func (s *CRUDHandler) create(req *http.Request) (string, error) {
 	return response, nil
 }
 
-//nolint:funlen
+//nolint:funlen,cyclop
 func (s *CRUDHandler) update(id int, req *http.Request) (string, error) {
 	ctx := req.Context()
 
-	rawJSON, err := NewRawJSONFromRequest(req)
+	rawJSON, err := NewRawJSONObjectFromRequest(req)
 	if err != nil {
 		return "", err
 	}
 
 	fields := rawJSON.Fields()
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("could not begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	ifMatch := req.Header.Get(header.NameIfMatch)
+	if ifMatch != "" { //nolint:nestif
+		match, err := header.ParseMatch(ifMatch)
+		if err != nil {
+			return "", fmt.Errorf("could not parse %s header: %w", header.NameIfMatch, header.ErrInvalidMatch)
+		}
+
+		// TODO: Compare current resource with the one in the request
+		// Return 200 if no updates
+		_, etagStr, err := s.getOne(ctx, tx, s.rel.Columns, id)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return "", ErrNotFound
+			}
+
+			return "", err
+		}
+
+		etag := header.NewETag(false, etagStr)
+
+		if !match.MatchStrong(etag) {
+			return "", fmt.Errorf("%w: %s does not match current resource", ErrPreconditionFailed, header.NameIfMatch)
+		}
+	}
+
 	setList := make([]string, len(fields))
 
 	for idx, field := range fields {
@@ -349,11 +414,6 @@ func (s *CRUDHandler) update(id int, req *http.Request) (string, error) {
 	args := rawJSON.Values()
 	args = append(args, id)
 
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return "", fmt.Errorf("could not begin transaction: %w", err)
-	}
-
 	row := tx.QueryRow(ctx, qry, args...)
 
 	slog.InfoContext(ctx, "ready to query db", "query", qry)
@@ -363,6 +423,11 @@ func (s *CRUDHandler) update(id int, req *http.Request) (string, error) {
 	err = row.Scan(&response)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			if ifMatch != "" {
+				// We already evaluated If-Match and we know that the user can see the resource.
+				return "", ErrForbidden
+			}
+
 			return "", ErrNotFound
 		}
 
@@ -372,6 +437,11 @@ func (s *CRUDHandler) update(id int, req *http.Request) (string, error) {
 		}
 
 		return "", fmt.Errorf("could not update resource: %w", err)
+	}
+
+	err = tx.Commit(ctx)
+	if err != nil {
+		return "", fmt.Errorf("could not commit transaction: %w", err)
 	}
 
 	return response, nil
