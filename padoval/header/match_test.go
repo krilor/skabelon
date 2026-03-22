@@ -3,7 +3,7 @@ package header_test
 import (
 	"testing"
 
-	"github.com/krilor/skabelon/header"
+	"github.com/krilor/skabelon/padoval/header"
 )
 
 func TestParseMatch(t *testing.T) {

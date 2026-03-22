@@ -1,27 +1,36 @@
 # skabelon
 
-Exploring generated REST API from DB.
+Exploring a generated REST API from a database.
 
-## TODOs
+<!-- toc -->
 
-Things I want to do.
+- [Planned Tasks](#planned-tasks)
+- [Stack](#stack)
+  - [Go](#go)
+- [Licence](#licence)
 
-- idempotence (headers)
-- optimistic locking (lost update stuff)
-- HTTP query to SQL query
-- batch api endpoint - jsonpatch?
+<!-- tocstop -->
+
+## Planned Tasks
+
+- Parsed, not validated, HTTP requests
+- Optimistic locking (lost update issues)
+- Idempotence (headers)
+- HTTP query to SQL query mapping
+- Batch API endpoint – JSON Patch?
 
 ## Stack
 
 ### Go
 
-TODO
+To be completed.
 
-## License
+## Licence
 
-All code and scripts as well as code examples and snippets in documentation are
-licensed under [Zero-Clause BSD](./LICENSE-0BSD). This means you can copy and
-use it however you want 🥳 - no strings attached. Documentation and the rest of
-the repository is licensed under
-[Creative Commons Attribution 4.0 International](./LICENSE-CC-BY-4.0). This
-means you can copy, redistribute and adapt it, but it requires attribution.
+All code and scripts, as well as code examples and snippets in the documentation,
+are licensed under the [Zero-Clause BSD licence](./LICENSE-0BSD). This means you may
+copy and use them however you wish 🥳 – no strings attached.
+
+Documentation and the remainder of the repository are licensed under the
+[Creative Commons Attribution 4.0 International licence](./LICENSE-CC-BY-4.0). This
+permits you to copy, redistribute, and adapt it, provided you give appropriate attribution.
